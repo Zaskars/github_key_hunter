@@ -1,8 +1,9 @@
-import os
-
 import requests
 import re
+import base64
 from typing import List, Dict
+from dotenv import load_dotenv
+import os
 
 GITHUB_API_URL = "https://api.github.com"
 
@@ -22,13 +23,14 @@ def get_repo_files(owner: str, repo: str, token: str) -> List[Dict]:
     response.raise_for_status()
     tree = response.json()["tree"]
 
+    allowed_extensions = ['.py', '.js', '.java', '.rb', '.go', '.php', '.html', '.env', '.config']
     files = []
     for item in tree:
-        if item["type"] == "blob":
+        if item["type"] == "blob" and any(item["path"].endswith(ext) for ext in allowed_extensions):
             file_url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/contents/{item['path']}"
             file_response = requests.get(file_url, headers=headers)
             file_response.raise_for_status()
-            content = file_response.json()["content"]
+            content = base64.b64decode(file_response.json()["content"]).decode('utf-8')
             files.append({"path": item["path"], "content": content})
     return files
 
@@ -41,11 +43,17 @@ def find_secrets(content: str) -> List[str]:
         r'ghp_[A-Za-z0-9]{36}',  # GitHub personal access token
         r'slack_api_token\s*=\s*["\']?([a-zA-Z0-9-]{24,36})["\']?',  # Slack API token
         r'api_key\s*=\s*["\']?([a-zA-Z0-9-]{32,64})["\']?',  # Generic API key
+        r'token\s*=\s*["\']?([a-zA-Z0-9-_]{20,})["\']?',  # Generic token with key name
+        r'key\s*=\s*["\']?([a-zA-Z0-9-_]{20,})["\']?',  # Generic key with key name
+        r'secret\s*=\s*["\']?([a-zA-Z0-9-_]{20,})["\']?',  # Generic secret with key name
+        r'password\s*=\s*["\']?([a-zA-Z0-9-_]{8,})["\']?',
     ]
 
     for pattern in patterns:
         matches = re.findall(pattern, content)
-        secrets.extend(matches)
+        for match in matches:
+            if len(match) >= 20:
+                secrets.extend(matches)
     return secrets
 
 
@@ -81,6 +89,7 @@ def display_secrets(all_secrets: Dict[str, Dict[str, List[str]]]) -> None:
 
 
 if __name__ == "__main__":
+    load_dotenv()
     username = os.getenv('username')
     token = os.getenv('token')
 
